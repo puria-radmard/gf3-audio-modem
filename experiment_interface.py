@@ -1,3 +1,4 @@
+import bitarray
 from os import error
 from numpy.testing._private.utils import print_assert_equal
 from scipy import signal
@@ -27,7 +28,7 @@ warnings.simplefilter("ignore", RuntimeWarning)
 warnings.simplefilter("ignore", MatplotlibDeprecationWarning)
 
 #### 
-# python experiment_interface.py action reader_idx protocol mode <optional numerical parameter 1> <optional numerical parameter 2>
+# python experiment_interface.py action reader_idx protocol mode <optional numerical parameter 1> <optional numerical parameter 2> <optional numerical parameter 3>
 # actions:
     # send --> write audio to .npy
     # receive --> process recording or simulated channel output
@@ -35,12 +36,12 @@ warnings.simplefilter("ignore", MatplotlibDeprecationWarning)
     # filename suffix of audio, e.g. mario
 # protocol:
     # protocols tested in the report
-    # current list: basic, rotation, shifting, shifting_only, LDPC, bandwidth_standard, pilot_reestimation, OFDM_reestimation, standard
+    # current list: basic, rotation, shifting, shifting_only, bandwidth_standard, LDPC, pilot_reestimation, OFDM_reestimation
 # mode:
     # custome name for differentiation
 ####
 
-recording_duration = 50
+recording_duration = 25
 action = sys.argv[1]
 reader_idx = sys.argv[2]
 protocol = sys.argv[3]
@@ -53,7 +54,7 @@ fs = 44100
 c_func = lambda t: exponential_chirp(t, f0=100, f1=10000, t1=T)
 total_num_metadata_bits = 200
 num_metadata_reps = 5
-uncoded_text_bits = translate_tiff("mario", num_metadata_reps)
+uncoded_text_bits = translate_file("mario", "tif", num_metadata_reps)
 
 parameters = dict(
     name = f"{protocol}_{mode}",
@@ -141,24 +142,6 @@ elif protocol == "shifting_only":
     parameters.update(custom_parameters)
     prot = Protocol(**parameters)
 
-elif protocol == "LDPC":
-    pilot_idx = np.arange(0, N / 2 - 1, 8)
-    unused_bins_idx = np.array([])
-    custom_parameters = dict(
-        pilot_idx = pilot_idx,
-        unused_bins_idx = unused_bins_idx,
-        num_gap_symbols = 0,
-        num_known_payload = 0,
-    )
-    protocol_parameters["pilot_tone_rotation"] = True
-    protocol_parameters["pilot_tone_shifting"] = True
-    protocol_parameters["LDPC_noise_scale"] = float(sys.argv[5])
-    parameters.update({"parameters": protocol_parameters})
-    parameters.update(custom_parameters)
-    prot = Protocol(**parameters)
-    encoder = LDPCCoding(standard="802.11n", rate="1/2", z=27, ptype="A")
-    decoder = LDPCDecoding(standard="802.11n", rate="1/2", z=27, ptype="A")
-
 elif protocol == "bandwidth_standard":
     pilot_idx = np.arange(0, N / 2 - 1, 8)
     unused_bins_idx = np.array(list(range(0, 49)) + list(range(699, int(N / 2 - 1))))
@@ -176,8 +159,26 @@ elif protocol == "bandwidth_standard":
     parameters.update({"parameters": protocol_parameters})
     parameters.update(custom_parameters)
     prot = Protocol(**parameters)
-    encoder = LDPCCoding(standard="802.11n", rate="1/2", z=27, ptype="A")
-    decoder = LDPCDecoding(standard="802.11n", rate="1/2", z=27, ptype="A")
+
+elif protocol == "LDPC":
+    pilot_idx = np.arange(0, N / 2 - 1, 8)
+    unused_bins_idx = np.array(list(range(0, 49)) + list(range(699, int(N / 2 - 1))))
+    unused_bins_idx = sorted(np.array(list(set(unused_bins_idx) - set(pilot_idx))))
+    custom_parameters = dict(
+        pilot_idx = pilot_idx,
+        unused_bins_idx = unused_bins_idx,
+        num_gap_symbols = 0,
+        num_known_payload = 0,
+    )
+    protocol_parameters["pilot_tone_rotation"] = True
+    protocol_parameters["pilot_tone_shifting"] = True
+    protocol_parameters["discard_pilot"] = True
+    protocol_parameters["LDPC_noise_scale"] = float(sys.argv[5])
+    parameters.update({"parameters": protocol_parameters})
+    parameters.update(custom_parameters)
+    prot = Protocol(**parameters)
+    encoder = LDPCCoding(standard="802.11n", rate="1/2", z=81, ptype="A")
+    decoder = LDPCDecoding(standard="802.11n", rate="1/2", z=81, ptype="A")
 
 elif protocol == "pilot_reestimation":
     pilot_idx = np.arange(0, N / 2 - 1, 8)
@@ -197,8 +198,8 @@ elif protocol == "pilot_reestimation":
     parameters.update({"parameters": protocol_parameters})
     parameters.update(custom_parameters)
     prot = Protocol(**parameters)
-    encoder = LDPCCoding(standard="802.11n", rate="1/2", z=27, ptype="A")
-    decoder = LDPCDecoding(standard="802.11n", rate="1/2", z=27, ptype="A")
+    encoder = LDPCCoding(standard="802.11n", rate="1/2", z=81, ptype="A")
+    decoder = LDPCDecoding(standard="802.11n", rate="1/2", z=81, ptype="A")
 
 elif protocol == "OFDM_reestimation":
     pilot_idx = np.arange(0, N / 2 - 1, 8)
@@ -219,37 +220,16 @@ elif protocol == "OFDM_reestimation":
     parameters.update({"parameters": protocol_parameters})
     parameters.update(custom_parameters)
     prot = Protocol(**parameters)
-    encoder = LDPCCoding(standard="802.11n", rate="1/2", z=27, ptype="A")
-    decoder = LDPCDecoding(standard="802.11n", rate="1/2", z=27, ptype="A")
+    encoder = LDPCCoding(standard="802.11n", rate="1/2", z=81, ptype="A")
+    decoder = LDPCDecoding(standard="802.11n", rate="1/2", z=81, ptype="A")
 
-elif protocol == "standard":
-    pilot_idx = np.arange(0, N / 2 - 1, 8)
-    unused_bins_idx = np.array(list(range(0, 49)) + list(range(699, int(N / 2 - 1))))
-    unused_bins_idx = sorted(np.array(list(set(unused_bins_idx) - set(pilot_idx))))
-    custom_parameters = dict(
-        pilot_idx = pilot_idx,
-        unused_bins_idx = unused_bins_idx,
-        num_gap_symbols = 1,
-        num_known_payload = 1,
-    )
-    protocol_parameters["pilot_tone_rotation"] = True
-    protocol_parameters["pilot_tone_shifting"] = True
-    protocol_parameters["discard_pilot"] = True
-    protocol_parameters["LDPC_noise_scale"] = float(sys.argv[5])
-    protocol_parameters["pilot_reestimate"] = float(sys.argv[6])
-    protocol_parameters["OFDM_reestimate"] = float(sys.argv[7])
-    parameters.update({"parameters": protocol_parameters})
-    parameters.update(custom_parameters)
-    prot = Protocol(**parameters)
-    encoder = LDPCCoding(standard="802.11n", rate="1/2", z=27, ptype="A")
-    decoder = LDPCDecoding(standard="802.11n", rate="1/2", z=27, ptype="A")
 
 if action == "send":
     # raise NotImplementedError("NEED TO REPEAT 5 BLOCKS")
     uncoded_text_bits += '0' * (encoder.mycode.K - len(uncoded_text_bits) % encoder.mycode.K)
     encoded_text_bits = encoder(np.array([int(b) for b in uncoded_text_bits]))
     transmitter = Transmitter("gray", N=N, L=L, protocol=prot)
-    transmitter.full_pipeline(encoded_text_bits, f"full_pipeline_transmission_audio_{reader_idx}_{protocol}")
+    transmitter.full_pipeline(encoded_text_bits, f"full_pipeline_transmission_audio_{reader_idx}_{protocol}_newcoding")
 
 elif sys.argv[1] == "receive":
     receiver = Receiver(N=N, L=L, constellation_name="gray", protocol = prot)
@@ -264,12 +244,12 @@ elif sys.argv[1] == "receive":
     # # myrecording = np.mean(myrecording, 1)
     # np.save(recording_file, myrecording)  
     # print("recording done!")
-    # channel_output = np.load(f"{recording_file}.npy", allow_pickle=True).reshape(-1)
+    channel_output = np.load(f"{recording_file}.npy", allow_pickle=True).reshape(-1)
 
-    artificial_channel_impulse = np.array(pd.read_csv("channel.csv", header=None)[0])
-    channel = Channel(artificial_channel_impulse)
-    channel_input = np.load(f"full_pipeline_transmission_audio_{reader_idx}_{protocol}.npy", allow_pickle=True).reshape(-1)
-    channel_output = channel.transmit(channel_input, noise = 0)
+    # artificial_channel_impulse = np.array(pd.read_csv("channel.csv", header=None)[0])
+    # channel = Channel(artificial_channel_impulse)
+    # channel_input = np.load(f"full_pipeline_transmission_audio_{reader_idx}_{protocol}.npy", allow_pickle=True).reshape(-1)
+    # channel_output = channel.transmit(channel_input, noise = 0)
 
     modu = Modulation("gray", N, L, protocol=prot)
     ground_truth_estimation_OFDM_frames = modu.data2OFDM(bitstring=prot.estimation_bits, return_frames=True, ignore_aug=True)
@@ -285,7 +265,7 @@ elif sys.argv[1] == "receive":
     received_bitstring = "".join(str(r) for r in received_bitstring)
 
     uncoded_data_bits = uncoded_text_bits[total_num_metadata_bits:]
-    error_rate = 1 - sum(uncoded_data_bits[i] == received_bitstring[i] for i in range(len(received_bitstring)))/len(received_bitstring)
+    error_rate = 1 - sum(uncoded_data_bits[i] == received_bitstring[i] for i in range(len(uncoded_data_bits)))/len(uncoded_data_bits)
 
     print(error_rate)
     import pdb; pdb.set_trace()
@@ -295,10 +275,34 @@ elif sys.argv[1] == "receive":
     # OFDM_generation_plot(video_folder_name, derived_channel, phase_mismatch_trials, N)
     # BER_plot(video_folder_name, uncoded_text_bits, received_bitstring)
 
-    decoded_image_bits = np.array([int(x) for x in received_bitstring])
-    a, b, c = 150, 150, 4
-    image_bits = np.packbits(decoded_image_bits).reshape(a, b, c)
-    if c == 4:
-        image_bits = image_bits[:,:,:3]
-    pil_image = Image.fromarray(image_bits, 'RGB')
-    pil_image.save(f"OUTPUT_IMAGE_{protocol}_{mode}.png")
+    # decoded_image_bits = np.array([int(x) for x in received_bitstring])
+    # a, b, c = 150, 150, 4
+    # image_bits = np.packbits(decoded_image_bits).reshape(a, b, c)
+    # if c == 4:
+    #     image_bits = image_bits[:,:,:3]
+    # pil_image = Image.fromarray(image_bits, 'RGB')
+    # pil_image.save(f"OUTPUT_IMAGE_{protocol}_{mode}.png")
+    
+    ftype = signal_metadata["filetype"]
+        
+    if ftype == "txt":
+        # Easy case
+        received_bitstring = "".join(str(r) for r in received_bitstring)
+        image_bits = bitarray.bitarray(received_bitstring)
+        image_bytes = image_bits.tobytes()
+        with open(f"OUTPUT_IMAGE_{protocol}_{mode}.{ftype}", 'w+b') as f:
+            f.write(image_bytes)
+
+    elif ftype == 'tif':
+
+        orig = [int(a) for a in uncoded_data_bits]
+        orig[500] = 1 if orig[500] == 0 else 0
+        orig = "".join(str(a) for a in orig)
+        output_bytes = [received_bitstring[i : i + 8] for i in range(0, len(received_bitstring), 8)]
+        output_bytes = bytearray([int(i, 2) for i in output_bytes])
+        with open(f"OUTPUT_IMAGE_{protocol}_{mode}.{ftype}", "w+b") as f:
+            f.write(output_bytes)
+            
+    elif ftype == 'wav':
+        np.packbits(received_bitstring).tofile(f"OUTPUT_IMAGE_{protocol}_{mode}.{ftype}")
+        

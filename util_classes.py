@@ -460,7 +460,7 @@ class Estimation(Demodulation):
 
         return transfer_function_trials, phase_mismatch_trials
 
-    def extract_average_impulse(self, transfer_function_trials, estimation_rotation):
+    def extract_average_impulse(self, transfer_function_trials, estimation_rotation = None):
 
         if type(estimation_rotation) != type(None):
             transfer_function_trials = np.array(transfer_function_trials)
@@ -540,6 +540,8 @@ class Transmitter(Modulation):
         )
         self.publish_data(final_transmission, OFDM_file_name)
         print(f"OFDM data eith chirp and estimation symbols save to {OFDM_file_name}")
+        
+        return final_transmission
 
 
 class Receiver(Estimation):
@@ -705,11 +707,9 @@ class Receiver(Estimation):
                 # slope_history.append(lin_reg_slope)
                 slope_history.append(current_delay)
                 if abs(current_delay) > 0.5 and self.protocol.parameters["pilot_tone_shifting"]:
-                    print("SHIFTING!!")
                     if not depth_set:
                         depth = o_idx
                         depth_set = True
-                    print(current_delay)
                     total_offset += int(current_delay / abs(current_delay))
                 self.pilot_sync_figs.append((left_pilot_idx, recovered_pilot_tones_left, phase_shifts, self.N))
 
@@ -747,6 +747,7 @@ class Receiver(Estimation):
         
         if len(left_pilot_idx):
             try:
+                depth = len(slope_history) # REMOVE
                 graph(slope_history, depth, self.protocol.name)
             except UnboundLocalError:
                 depth = len(slope_history)
@@ -801,7 +802,7 @@ class ConvCoding(Encoding):
 class NoCoding(Encoding):
     def __init__(self):
         super().__init__()
-        pass
+        self.mycode = DummyMyCode()
 
     def __call__(self, inputs):
         return inputs
@@ -826,7 +827,8 @@ class LDPCCoding(Encoding):
 
 class DummyMyCode:
     def __init__(self):
-        self.N = 200 # PARAMETERISE THIS
+        self.N = 400 # PARAMETERISE THIS
+        self.K = 1
 
 class Decoding:
     def __init__(self):

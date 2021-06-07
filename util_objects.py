@@ -4,6 +4,10 @@ from PIL import Image
 import numpy as np
 import io
 import random
+import os
+import ntpath
+import numpy as np
+import difflib
 
 fs = 44100
 
@@ -42,7 +46,7 @@ def OLD_metadata(filetype, a, b, c):
     meta = filetype_ + sep + a_ + sep + b_ + sep + c_ + sep
     return meta
 
-def create_metadata(inputfile_name, input_bits):
+def create_metadata(inputfile_name, input_bits, num_reps = 5):
     # here input_bits is the uncoded bits, if length of it is used, delete number_of_bits line
     file_type = inputfile_name.split('.')[-1]
     if file_type == 'wav':
@@ -59,7 +63,7 @@ def create_metadata(inputfile_name, input_bits):
     size_array = np.array(list(file_size), dtype = int)
     length_data = np.concatenate((pad_zeros, size_array)).tolist()
     type_data = np.array(typedata).tolist()
-    meta_data = np.concatenate((type_data*5, length_data*5))
+    meta_data = np.concatenate((type_data*num_reps, length_data*num_reps))
     return meta_data
 
 def translate_tiff(tiff_name, num_reps):
@@ -74,7 +78,7 @@ def translate_tiff(tiff_name, num_reps):
     return transmitted_bits
 
 
-def translate_file(fname, ftype, num_md_raps):
+def translate_file(fname, ftype, num_md_reps = 5):
     with open(f"{fname}.{ftype}", 'rb') as f:
         info_bytes = f.read()
     bit_string = ''
@@ -88,6 +92,42 @@ def translate_file(fname, ftype, num_md_raps):
     return transmitted_bits
 
 
+def read_to_binary(filepath, relative=True):
+   """ filepath (either absolute or relative) -> the tuple (filename, filesize [bytes], binary_arr) """
+
+   full_path = filepath
+   if relative:
+       script_dir = os.path.dirname(__file__)
+       full_path = os.path.join(script_dir, filepath)
+
+   file_size = int(os.path.getsize(full_path)) # nb - filesize in bytes
+   file_name = ntpath.basename(full_path)
+
+   file_bytes = np.fromfile(full_path, dtype = "uint8")
+   return (file_name, file_size, np.unpackbits(file_bytes))
+
+
+def write_from_binary(filename, binary_arr):
+   """ writes a binary numpy array to a file. filename can include a subdirectory, eg files_out/some_file.wav """
+
+   return np.packbits(binary_arr).tofile(filename)
+
+
+def file_to_full_binary(filepath, no_metadata_repeats=5):
+   """ reads a file to binary and adds relevant metadata """
+
+   file = read_to_binary(filepath)
+   file_type = file[0].split(".")[-1]
+   file_size = file[1] * 8 # to convert to bits
+   file_bits = file[2]
+
+   metadata = create_metadata(file_type, file_bits, num_reps=no_metadata_repeats)
+
+   arr =  np.append(metadata, file_bits)
+   return  "".join([str(int(a)) for a in arr])
+
+
+
 def exponential_chirp(t, f0, f1, t1):
     r = f1 / f0
     window_strength = 50
@@ -98,9 +138,6 @@ def exponential_chirp(t, f0, f1, t1):
         * (1 - math.e ** (window_strength * (t - t1)))
     )
 
-
-def from_the_box_chirp(t, f0, f1, t1):
-    return chirp(t, f0=f0, f1=f1, t1=t1, method="logarithmic")
 
 
 def publish_random_bits(file_name, binary_length):
@@ -191,30 +228,3 @@ def process_metadata(decoded_metadata):
 
 
 
-def OLD_process_metadata(metadata_bits, num_reps):
-
-    # Inputs:
-    # metadata_bits is all the bits for the metadata at the start of the signal.
-            # This is all the reps (i.e. 360 in our case)
-    # num_reps is how many repitions we know that metadata_bits contains, (i.e. 3 in our case)
-    
-    # Split all the repitions into the known number of repititions e.g. 360bits --> [120bits, 120bits, 120bits]
-    metadata_bits = np.array([int(m) for m in metadata_bits])
-    metadata_bits_reps = np.split(np.array(metadata_bits), num_reps)
-    # Average over all reptitions and round - this is like majority vote in the repition code
-    voted_metadata_bits = np.mean(metadata_bits_reps, axis = 0).round().astype(int)
-    # Split the average voted bits into bytes of 8
-    metadata_bytes = np.split(voted_metadata_bits, len(voted_metadata_bits)/8)
-    
-    # ADD STUFF HERE - inputting known values from mario.tiff
-
-    a = 150
-    b = 150
-    c = 4
-    return {
-        "filetype": "tif",
-        "dim1": a,
-        "dim2": b,
-        "dim3": c,
-        "total_data_bits": a*b*c*8
-    }
