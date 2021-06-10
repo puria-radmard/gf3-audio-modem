@@ -41,7 +41,7 @@ warnings.simplefilter("ignore", MatplotlibDeprecationWarning)
     # custome name for differentiation
 ####
 
-recording_duration = 25
+recording_duration = 10
 action = sys.argv[1]
 reader_idx = sys.argv[2]
 protocol = sys.argv[3]
@@ -54,7 +54,7 @@ fs = 44100
 c_func = lambda t: exponential_chirp(t, f0=100, f1=10000, t1=T)
 total_num_metadata_bits = 200
 num_metadata_reps = 5
-uncoded_text_bits = translate_file("mario", "tif", num_metadata_reps)
+uncoded_text_bits = translate_tiff("mario", "tif", num_metadata_reps)
 
 parameters = dict(
     name = f"{protocol}_{mode}",
@@ -229,7 +229,7 @@ if action == "send":
     uncoded_text_bits += '0' * (encoder.mycode.K - len(uncoded_text_bits) % encoder.mycode.K)
     encoded_text_bits = encoder(np.array([int(b) for b in uncoded_text_bits]))
     transmitter = Transmitter("gray", N=N, L=L, protocol=prot)
-    transmitter.full_pipeline(encoded_text_bits, f"full_pipeline_transmission_audio_{reader_idx}_{protocol}_newcoding")
+    transmitter.full_pipeline(encoded_text_bits, f"full_pipeline_transmission_audio_{reader_idx}_{protocol}")
 
 elif sys.argv[1] == "receive":
     receiver = Receiver(N=N, L=L, constellation_name="gray", protocol = prot)
@@ -265,24 +265,23 @@ elif sys.argv[1] == "receive":
     received_bitstring = "".join(str(r) for r in received_bitstring)
 
     uncoded_data_bits = uncoded_text_bits[total_num_metadata_bits:]
-    error_rate = 1 - sum(uncoded_data_bits[i] == received_bitstring[i] for i in range(len(uncoded_data_bits)))/len(uncoded_data_bits)
+    error_rate = 1 - sum(uncoded_data_bits[i] == received_bitstring[i] for i in range(int(len(uncoded_data_bits)/2)))/(len(uncoded_data_bits)/2)
 
     print(error_rate)
     import pdb; pdb.set_trace()
-    # generate_constellation_video(video_folder_name, receiver.constellation_figs, receiver.pre_rot_constallation_figs, f"constalletion_withpilotsync")
-    # generate_phaseshifting_video(video_folder_name, receiver.pilot_sync_figs, f"pilotphaseshift_withpilotsync", prot.pilot_symbol)
-    # generate_channel_estim_video(video_folder_name, derived_channel, f"channelupdates_withpilotsync")
+    # generate_constellation_video("videos_final", receiver, f"constalletion_withpilotsync")
+    # generate_phaseshifting_video("fixed_reg", receiver.pilot_sync_figs, f"pilotphaseshift_withpilotsync", prot.pilot_symbol)
+    generate_channel_estim_video("videos_reestimate_OFDM", derived_channel, f"channelupdates_withpilotsync")
     # OFDM_generation_plot(video_folder_name, derived_channel, phase_mismatch_trials, N)
     # BER_plot(video_folder_name, uncoded_text_bits, received_bitstring)
 
-    # decoded_image_bits = np.array([int(x) for x in received_bitstring])
-    # a, b, c = 150, 150, 4
-    # image_bits = np.packbits(decoded_image_bits).reshape(a, b, c)
-    # if c == 4:
-    #     image_bits = image_bits[:,:,:3]
-    # pil_image = Image.fromarray(image_bits, 'RGB')
-    # pil_image.save(f"OUTPUT_IMAGE_{protocol}_{mode}.png")
-    
+    decoded_image_bits = np.array([int(x) for x in received_bitstring])
+    a, b, c = 150, 150, 4
+    image_bits = np.packbits(decoded_image_bits).reshape(a, b, c)
+    image_bits = image_bits[:,:,:3]
+    pil_image = Image.fromarray(image_bits, 'RGB')
+    pil_image.save(f"OUTPUT_IMAGE_{protocol}_{mode}.png")
+        
     ftype = signal_metadata["filetype"]
         
     if ftype == "txt":
@@ -295,8 +294,6 @@ elif sys.argv[1] == "receive":
 
     elif ftype == 'tif':
 
-        orig = [int(a) for a in uncoded_data_bits]
-        orig[500] = 1 if orig[500] == 0 else 0
         orig = "".join(str(a) for a in orig)
         output_bytes = [received_bitstring[i : i + 8] for i in range(0, len(received_bitstring), 8)]
         output_bytes = bytearray([int(i, 2) for i in output_bytes])

@@ -30,7 +30,7 @@ warnings.simplefilter("ignore", np.ComplexWarning)
 warnings.simplefilter("ignore", RuntimeWarning)
 warnings.simplefilter("ignore", MatplotlibDeprecationWarning)
 
-recording_duration = 75
+recording_duration = 52
 action = sys.argv[1]
 file_id = sys.argv[2]
 
@@ -71,7 +71,7 @@ protocol_parameters = {
     "repeat_estimation_blocks": True,
     "LDPC_noise_scale": 10,
     "pilot_reestimate": 0,
-    "OFDM_reestimate": 0.5
+    "OFDM_reestimate": 0.2
 }
 parameters.update({"parameters": protocol_parameters})
 
@@ -81,14 +81,15 @@ decoder = LDPCDecoding(standard="802.11n", rate="1/2", z=81, ptype="A")
 
 if action == "send":
     file_type = sys.argv[3]
-    # uncoded_text_bits = file_to_full_binary(file_id + "." + file_type, num_metadata_reps)
+    uncoded_text_bits = file_to_full_binary(file_id + "." + file_type, num_metadata_reps)
 
-    filename = file_id + "." + file_type # for all types of files
-    with open(filename, "rb") as f:
-        file = f.read()
-    source = bitarray() # convert to bits, can use other data structures
-    source.frombytes(file)
-    uncoded_text_bits = "".join([str(int(a)) for a in source])
+    # filename = file_id + "." + file_type # for all types of files
+    # with open(filename, "rb") as f:
+    #     file = f.read()
+    # source = bitarray() # convert to bits, can use other data structures
+    # source.frombytes(file)
+    # uncoded_text_bits = "".join([str(int(a)) for a in source])
+
     arr = create_metadata(file_type, uncoded_text_bits, num_reps=5)
     metadata = "".join([str(int(a)) for a in arr])
     uncoded_text_bits = metadata + uncoded_text_bits
@@ -115,7 +116,7 @@ elif sys.argv[1] == "receive":
     # myrecording = np.mean(myrecording, 1)
     # np.save(recording_file, myrecording)  
     # print("recording done!")
-    # channel_output = np.load(f"{recording_file}.npy", allow_pickle=True).reshape(-1)
+    channel_output = np.load(f"{recording_file}.npy", allow_pickle=True).reshape(-1)
     
     aud_file_name = sys.argv[3]
     artificial_channel_impulse = np.array(pd.read_csv("channel.csv", header=None)[0])
@@ -146,23 +147,37 @@ elif sys.argv[1] == "receive":
     
     ftype = signal_metadata["filetype"]
 
-    with open(output_file_name + "." + ftype, "wb") as f:
-        rbba = bitarray(received_bitstring)
-        f.write(rbba.tobytes())
+    # with open(output_file_name + "." + ftype, "wb") as f:
+    #     rbba = bitarray(received_bitstring)
+    #     f.write(rbba.tobytes())
 
-    # write_from_binary(output_file_name + "." + ftype, received_bitstring)
     import pdb; pdb.set_trace()
+
+    if ftype == "txt":
+        symbol_bits_string = "".join((str(s) for s in received_bitstring))
+
+        output_bytes = [
+            symbol_bits_string[i : i + 8] for i in range(0, len(symbol_bits_string), 8)
+        ]
+        output_bytes = bytearray([int(i, 2) for i in output_bytes])
+
+        with open(output_file_name + "." + ftype, "w+b") as f:
+            f.write(output_bytes)
+
+    else:
+        write_from_binary(output_file_name + "." + ftype, received_bitstring)
+    
         
     if ftype == "txt":
         # Easy case
         received_bitstring = "".join(str(r) for r in received_bitstring)
-        image_bits = bitarray.bitarray(received_bitstring)
+        image_bits = bitarray(received_bitstring)
         image_bytes = image_bits.tobytes()
         with open(f"{output_file_name}.{ftype}", 'w+b') as f:
             f.write(image_bytes)
 
     elif ftype == 'tif':
-        image_bits = bitarray.bitarray(received_bitstring)
+        image_bits = bitarray(received_bitstring)
         image_bytes = image_bits.tobytes()
         with open(f"{output_file_name}.tif", 'wb') as f:
             f.write(image_bytes)

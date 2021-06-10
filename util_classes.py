@@ -215,12 +215,15 @@ class Protocol:
         return post_pilot_constallation_values
 
     def get_pilot_idx(self):
-        left_pilot_idx = (self.pilot_idx + 1).astype(int)
+        full_left_pilot_idx = (self.pilot_idx + 1).astype(int)
+        full_right_pilot_idx = (self.N - full_left_pilot_idx).astype(int)[::-1]
         if self.parameters["discard_pilot"]:
             u_b_i = self.unused_bins_idx
-            left_pilot_idx = np.sort(np.array(list(set(left_pilot_idx) - set(u_b_i))))
-        right_pilot_idx = (self.N - self.pilot_idx - 1).astype(int)[::-1]
-        return left_pilot_idx, right_pilot_idx
+            left_pilot_idx = np.sort(np.array(list(set(full_left_pilot_idx) - set(u_b_i))))
+            right_pilot_idx = (self.N - left_pilot_idx).astype(int)[::-1]
+            return left_pilot_idx, right_pilot_idx, full_left_pilot_idx, full_right_pilot_idx
+        else:
+            return full_left_pilot_idx, full_right_pilot_idx, full_left_pilot_idx, full_right_pilot_idx
 
     def generate_all_random_bits(self):
         bits_per_chunk = self.get_bits_per_chunk(ignore_aug=True)
@@ -322,8 +325,6 @@ class Demodulation:
         self.N = N
         self.L = L
         self.constellation = CONSTELLATIONS_DICT[constellation_name]
-        self.constellation_figs = []
-        self.pre_rot_constallation_figs = []
         self.protocol = protocol
 
     def OFDM2constellation(self, channel_output: np.ndarray, channel: Channel):
@@ -342,12 +343,13 @@ class Demodulation:
         )
 
     def constellation2bits_sequence(
-        self, constellation_values: List[float], constellation_values_pre_rot, show=True
+        self, constellation_values: List[float], constellation_values_pre_rot, constellation_values_no_shift, show=True
     ) -> str:
 
         symbol_bits_sequence = []
         const_hist = []
         const_hist_pre_rot = []
+        const_hist_no_shift = []
         for j, d in enumerate(constellation_values):
             if np.isnan(d):
                 continue
@@ -355,15 +357,16 @@ class Demodulation:
             if show:
                 const_hist.extend([d])
                 const_hist_pre_rot.extend([constellation_values_pre_rot[j]])
+                const_hist_no_shift.extend([constellation_values_no_shift[j]])
         output_bitstring = "".join([str(a) for a in symbol_bits_sequence])
 
         if show:
-            new_fig = np.array(const_hist)  # new_fig = constellation_plot(const_hist)
-            new_fig_pre_rot = np.array(
-                const_hist_pre_rot
-            )  # new_fig_pre_rot = constellation_plot(const_hist_pre_rot)
-            self.constellation_figs.append(new_fig)
-            self.pre_rot_constallation_figs.append(new_fig_pre_rot)
+            new_fig = np.array(const_hist)
+            new_fig_pre_rot = np.array(const_hist_pre_rot)
+            new_fig_no_shift = np.array(const_hist_no_shift)
+            self.constellation_figs = new_fig
+            self.pre_rot_constallation_figs = new_fig_pre_rot
+            self.no_shift_constallation_figs = new_fig_no_shift
 
         return output_bitstring
 
@@ -561,7 +564,6 @@ class Receiver(Estimation):
         right_pilot_idx,
         recovered_pilot_tones_left,
         recovered_pilot_tones_right,
-        deconvolved_frames,
     ):
 
         pilot_spectrum_left = recovered_pilot_tones_left / self.protocol.pilot_symbol
@@ -571,7 +573,7 @@ class Receiver(Estimation):
 
         x = (
             np.concatenate([[0], left_pilot_idx, [int(self.N / 2)], right_pilot_idx])
-            / len(deconvolved_frames[0])
+            / self.N
             - 0.5
         )
         y = np.concatenate(
@@ -579,7 +581,7 @@ class Receiver(Estimation):
         )
 
         full_x = (
-            np.array(range(len(deconvolved_frames[0]))) / len(deconvolved_frames[0])
+            (np.array(range(self.N)) / self.N)
             - 0.5
         )
 
@@ -598,7 +600,7 @@ class Receiver(Estimation):
     def get_left_phase_shifts(self, recovered_pilot_tones_left):
         get_phase = lambda x: np.angle(x)
         phase_shifts = [
-            get_phase(r) + np.angle(self.protocol.pilot_symbol)
+            get_phase(r) - np.angle(self.protocol.pilot_symbol)
             for r in recovered_pilot_tones_left
         ]
         return phase_shifts
@@ -648,6 +650,7 @@ class Receiver(Estimation):
         ground_truth_reestimation_OFDM_frames,
         sample_shift,
         decoder,
+        return_graph = False
     ):
         print("receiving signal")
         received_OFDM_slices, chirp_filtered, chirp_slices = self.receive_channel_output(channel_output, sample_shift, return_as_slices=True)
@@ -659,7 +662,7 @@ class Receiver(Estimation):
         impulse_response = self.extract_average_impulse(transfer_function_trials, None)
         derived_channel = Channel(impulse_response.real)
         
-        received_constellations, pre_rot_received_constellations, slope_history = [], [], []
+        received_constellations, pre_rot_received_constellations, no_shift_received_constellations, slope_history = [], [], [], []
 
         OFDM_generation_plot("./", derived_channel, phase_mismatch_trials, self.N, self.protocol.name)
         chirp_frame_location_plot(channel_output, chirp_filtered, chirp_slices, self.protocol.name)
@@ -674,6 +677,8 @@ class Receiver(Estimation):
 
             offset_slice = slice(ofdm_slice.start - total_offset, ofdm_slice.stop - total_offset)
             frame = channel_output[offset_slice]
+            
+            no_shift_frame = channel_output[ofdm_slice]
 
             if o_idx % total_cycle_num_symbols < self.protocol.num_known_payload:
                 if self.protocol.parameters["OFDM_reestimate"]:
@@ -686,16 +691,27 @@ class Receiver(Estimation):
 
             if len(frame) < (self.N + self.L):
                 break
+
             deconvolved_frames = self.OFDM2constellation(frame, derived_channel)
+            no_shift_deconvolved_frames = self.OFDM2constellation(no_shift_frame, derived_channel)
             old_deconvolved_frames = deconvolved_frames.copy()
 
-            left_pilot_idx, right_pilot_idx = self.protocol.get_pilot_idx()        
+            left_pilot_idx, right_pilot_idx, full_left_pilot_idx, full_right_pilot_idx = self.protocol.get_pilot_idx()        
 
             if len(left_pilot_idx):
 
                 recovered_pilot_tones_left, recovered_pilot_tones_right = self.get_recovered_pilot_tones(deconvolved_frames, left_pilot_idx, right_pilot_idx)
-                # if not np.isclose(np.unique(recovered_pilot_tones_left[0])[0], 1+1j):
-                #     import pdb; pdb.set_trace()
+                full_recovered_pilot_tones_left, full_recovered_pilot_tones_right = self.get_recovered_pilot_tones(deconvolved_frames, full_left_pilot_idx, full_right_pilot_idx)
+                
+                if self.protocol.parameters["pilot_reestimate"]:
+                    full_pilot_spectrum = self.interpolate_channel(
+                        full_left_pilot_idx,
+                        full_right_pilot_idx,
+                        full_recovered_pilot_tones_left,
+                        full_recovered_pilot_tones_right,
+                    )
+                    derived_channel.update_channel_spectrum(full_pilot_spectrum, self.protocol.parameters["pilot_reestimate"])
+
                 phase_shifts = self.get_left_phase_shifts(recovered_pilot_tones_left)
                 lin_reg_slope = self.linear_regression_offset(left_pilot_idx, phase_shifts)
 
@@ -703,28 +719,20 @@ class Receiver(Estimation):
                     deconvolved_frames = [self.fix_constellation_frame(d, lin_reg_slope, left_pilot_idx) for d in deconvolved_frames]
 
                 # TODO: how does this cope with skipped o_idx
-                current_delay = (self.N * lin_reg_slope) / (2 * np.pi)
+                current_delay = - (self.N * lin_reg_slope) / (2 * np.pi)
                 # slope_history.append(lin_reg_slope)
                 slope_history.append(current_delay)
                 if abs(current_delay) > 0.5 and self.protocol.parameters["pilot_tone_shifting"]:
                     if not depth_set:
                         depth = o_idx
                         depth_set = True
-                    total_offset += int(current_delay / abs(current_delay))
+                    total_offset -= int(current_delay / abs(current_delay))
                 self.pilot_sync_figs.append((left_pilot_idx, recovered_pilot_tones_left, phase_shifts, self.N))
 
-                if self.protocol.parameters["pilot_reestimate"]:
-                    full_pilot_spectrum = self.interpolate_channel(
-                        left_pilot_idx,
-                        right_pilot_idx,
-                        recovered_pilot_tones_left,
-                        recovered_pilot_tones_right,
-                        deconvolved_frames,
-                    )
-                    derived_channel.update_channel_spectrum(full_pilot_spectrum, self.protocol.parameters["pilot_reestimate"])
 
             received_constellations.extend(self.get_useful_constellations(deconvolved_frames))
             pre_rot_received_constellations.extend(self.get_useful_constellations(old_deconvolved_frames))
+            no_shift_received_constellations.extend(self.get_useful_constellations(no_shift_deconvolved_frames))
 
             req1 = not num_required_frames_total
             req2 = len(received_constellations) >= (self.protocol.total_num_metadata_bits / self.protocol.constellation_length + 1)/decoder.rate
@@ -745,7 +753,7 @@ class Receiver(Estimation):
             if o_idx == num_required_frames_total - 1:
                 break
         
-        if len(left_pilot_idx):
+        if len(left_pilot_idx) and not return_graph:
             try:
                 depth = len(slope_history) # REMOVE
                 graph(slope_history, depth, self.protocol.name)
@@ -757,23 +765,28 @@ class Receiver(Estimation):
 
         received_constellations = np.array(received_constellations).reshape(1, -1)
         pre_rot_received_constellations = np.array(pre_rot_received_constellations).reshape(1, -1)
+        no_shift_received_constellations = np.array(no_shift_received_constellations).reshape(1, -1)
         channel_spectrum = derived_channel.transfer_function(self.N)
         kw = {
             "demodulator": self, 
             "received_constellations": received_constellations,
             "pre_rot_received_constellations": pre_rot_received_constellations,
+            "no_shift_received_constellations": no_shift_received_constellations,
             "show": True,
             "channel_estimation": channel_spectrum,
             "scaling": self.protocol.parameters["LDPC_noise_scale"]
         }
         decoded_bits = decoder.decode(**kw)
         databits = decoded_bits[self.protocol.total_num_metadata_bits: unencoded_bits_required]
-        return (
-            databits,
-            derived_channel,
-            phase_mismatch_trials,
-            signal_metadata,
-        )
+        if not return_graph:
+            return (
+                databits,
+                derived_channel,
+                phase_mismatch_trials,
+                signal_metadata,
+            )
+        else:
+            return slope_history
 
 
 class Encoding:
@@ -863,10 +876,13 @@ class NoDecoding(Decoding):
         demodulator = kwargs.get("demodulator")
         received_constellations = kwargs.get("received_constellations").reshape(-1)
         pre_rot_received_constellations = kwargs.get("pre_rot_received_constellations")
+        no_shift_received_constellations = kwargs.get("no_shift_received_constellations")
         if type(pre_rot_received_constellations) != type(None):
             pre_rot_received_constellations = pre_rot_received_constellations.reshape(-1)
+        if type(no_shift_received_constellations) != type(None):
+            no_shift_received_constellations = no_shift_received_constellations.reshape(-1)
         show = kwargs.get("show")
-        return demodulator.constellation2bits_sequence(received_constellations, pre_rot_received_constellations, show)
+        return demodulator.constellation2bits_sequence(received_constellations, pre_rot_received_constellations, no_shift_received_constellations, show)
 
 
 class LDPCDecoding(Decoding):

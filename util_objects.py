@@ -66,7 +66,7 @@ def create_metadata(inputfile_name, input_bits, num_reps = 5):
     meta_data = np.concatenate((type_data*num_reps, length_data*num_reps))
     return meta_data
 
-def translate_tiff(tiff_name, num_reps):
+def translate_tiff(tiff_name, *args):
     filetype = 'tif'
     image = Image.open(f'{tiff_name}.tif')
     data = np.asarray(image)
